@@ -1,6 +1,9 @@
 {
-  "author": "WebThingsIO",
-  "description": "TP-Link Kasa smart plug/bulb adapter plugin for WebThings Gateway",
+  "author": "Hedroed",
+  "id": "xiaomi-temperature-humidity-sensor-v2-adapter",
+  "name": "Xiaomi Bluetooth Temperature and Humidity Sensor v2",
+  "short_name": "Xiaomi Temp v2",
+  "description": "Xiaomi Bluetooth Temperature and Humidity Sensor v2",
   "gateway_specific_settings": {
     "webthings": {
       "exec": "python3 {path}/main.py",
@@ -9,30 +12,57 @@
       "strict_min_version": "0.10.0"
     }
   },
-  "homepage_url": "https://github.com/WebThingsIO/tplink-adapter",
-  "id": "tplink-adapter",
+  "homepage_url": "https://github.com/Hedroed",
   "license": "MPL-2.0",
   "manifest_version": 1,
-  "name": "TP-Link Kasa",
   "options": {
     "default": {
-      "addresses": []
+      "pollInterval": 1000
     },
     "schema": {
       "type": "object",
       "required": [
-        "addresses"
+        "pollInterval"
       ],
       "properties": {
-        "addresses": {
+        "pollInterval": {
+          "type": "integer",
+          "title": "The number of milliseconds between two poll intervals"
+        },
+        "logging": {
+          "type": "object",
+          "title": "Log settings",
+          "properties": {
+            "debug": {
+              "title": "Enable debug logs",
+              "type": "boolean"
+            }
+          }
+        },
+        "devices": {
           "type": "array",
+          "title": "List of device",
           "items": {
-            "type": "string"
+            "type": "object",
+            "title": "A device",
+            "required": [
+              "mac"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "title": "The ID of the device (will be generated for you)",
+                "readOnly": true
+              },
+              "mac": {
+                "type": "string",
+                "title": "The BLE mac address of the device"
+              }
+            }
           }
         }
       }
     }
   },
-  "short_name": "TP-Link Kasa",
-  "version": "0.6.3"
+  "version": "0.1.0"
 }
