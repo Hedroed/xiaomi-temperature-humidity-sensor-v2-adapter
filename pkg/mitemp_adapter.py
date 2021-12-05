@@ -11,7 +11,7 @@ _TIMEOUT = 3
 class MiTempAdapter(Adapter):
     """Adapter for Xiaomi temperature and humidity sensor devices."""
 
-    def __init__(self, verbose=False):
+    def __init__(self, loop=None, verbose=False):
         """
         Initialize the object.
 
@@ -22,6 +22,8 @@ class MiTempAdapter(Adapter):
                          'xiaomi-temperature-humidity-sensor-v2-adapter',
                          'xiaomi-temperature-humidity-sensor-v2-adapter',
                          verbose=verbose)
+
+        self.loop = loop
 
         self.pairing = False
         self.start_pairing(_TIMEOUT)
@@ -40,13 +42,16 @@ class MiTempAdapter(Adapter):
         if config.get('devices') is None:
             return
 
-        for device in config['devices']:
+        for dev in config['devices']:
 
             # bluepy stuff
-            print(f'WIP: {device} can be added')
+            print(f'WIP: {dev} can be added')
 
-            # if dev:
-            #     self._add_device(dev)
+            _id = f"mitemp-{dev['mac'].replace(':', '-')}"
+            if _id not in self.devices:
+                device = MiTempSensorDevice(self, _id, dev['mac'], loop=self.loop)
+
+                self.handle_device_added(device)
 
     def start_pairing(self, timeout):
         """
@@ -61,29 +66,7 @@ class MiTempAdapter(Adapter):
 
         self._add_from_config()
 
-        # for dev in Discover.discover(timeout=min(timeout, _TIMEOUT)).values():
-        #     if not self.pairing:
-        #         break
-
-        #     self._add_device(dev)
-
         self.pairing = False
-
-    def _add_device(self, dev):
-        """
-        Add the given device, if necessary.
-
-        dev -- the device object from pyHS100
-        """
-
-        _id = 'mitemp-' + dev.sys_info['deviceId']
-        if _id not in self.devices:
-            if isinstance(dev, SmartBulb):
-                device = MiTempSensor(self, _id, dev)
-            else:
-                return
-
-            self.handle_device_added(device)
 
     def cancel_pairing(self):
         """Cancel the pairing process."""

@@ -1,27 +1,31 @@
 """Xiaomi adapter for WebThings Gateway."""
 
-from gateway_addon import Device
-import threading
+from gateway_addon import Device, Property
+import asyncio
 import time
+import bluepy.btle
+import struct
+from typing import List
 
-from .mitemp_property import MiTempProperty
 from .util import print
 
 
-_POLL_INTERVAL = 5
+_POLL_INTERVAL = 120
 
 
 class MiTempSensorDevice(Device):
     """Xiaomi smart bulb type."""
 
-    def __init__(self, adapter, _id, mac: str):
+    def __init__(self, adapter, _id, mac: str, loop: asyncio.BaseEventLoop = None):
         """
         Initialize the object.
 
         adapter -- the Adapter managing this device
         _id -- ID of this device
         """
-        MiTempDevice.__init__(self, adapter, _id)
+        self.properties: List[Property]
+
+        super().__init__(adapter, _id)
 
         self._type = ['TemperatureSensor', 'HumiditySensor']
         self.name = 'Mi Temp Sensor'
@@ -32,8 +36,31 @@ class MiTempSensorDevice(Device):
         # # bluepy stuff
         print(f'WIP: new {self.mac} device')
 
+        try:
+            pp = bluepy.btle.Peripheral(self.mac)
 
-        self.properties['temperature'] = MiTempProperty(
+            # read battery level
+            battery, = struct.unpack('<B', pp.readCharacteristic(27))
+
+            # read sensor data
+            temperature, humidity, voltage = struct.unpack('<HBH', pp.readCharacteristic(54))
+
+        except bluepy.btle.BTLEDisconnectError as err:
+            print(f'Error during poll: {err}')
+            self.name = 'Invalid MiTemp'
+            return
+
+        finally:
+            if pp:
+                pp.disconnect()
+            time.sleep(5)
+
+        print(f'get Temperature {temperature / 100} C')
+        print(f'get Humidity {humidity}%')
+        print(f'get Voltage {voltage / 1000} V')
+        print(f'get Battery {battery}%')
+
+        self.properties['temperature'] = Property(
             self,
             'temperature',
             {
@@ -44,30 +71,28 @@ class MiTempSensorDevice(Device):
                 'maximum': 127.99,
                 'multipleOf': 0.01,
                 'unit': 'degree celsius',
-                'description': 'The ambient temperature',
-                'readOnly': True
+                'description': 'The ambient temperature'
             },
-            0.0
         )
+        self.properties['temperature'].set_cached_value(temperature / 100)
 
-        self.properties['humidity'] = MiTempProperty(
+        self.properties['humidity'] = Property(
             self,
-            'temperature',
+            'humidity',
             {
-                'type': 'number',
+                'type': 'integer',
                 '@type': 'HumidityProperty',
                 'minimum': 0,
                 'maximum': 100,
-                'multipleOf': 0.1,
-                'unit': '%',
+                'unit': 'percent',
                 'title': 'Humidity',
                 'description': 'The relative humidity',
                 'readOnly': True
-            },
-            0.0
+            }
         )
+        self.properties['humidity'].set_cached_value(humidity)
 
-        self.properties['voltage'] = MiTempProperty(
+        self.properties['voltage'] = Property(
             self,
             'voltage',
             {
@@ -77,47 +102,98 @@ class MiTempSensorDevice(Device):
                 'unit': 'volt',
                 'multipleOf': 0.001,
             },
-            0.0
         )
+        self.properties['voltage'].set_cached_value(voltage / 1000)
 
-        self.properties['battery'] = MiTempProperty(
+        self.properties['battery'] = Property(
             self,
             'battery',
             {
                 'type': 'integer',
-                'minimum': 0,
-                'maximum': 100,
-                'multipleOf': 1,
                 'unit': 'percent',
                 'title': 'Battery',
                 'description': 'Current battery level',
                 'readOnly': True
             },
-            100
         )
+        self.properties['battery'].set_cached_value(battery)
 
-        t = threading.Thread(target=self.poll)
-        t.daemon = True
-        t.start()
+        if loop:
+            self.update_task = asyncio.run_coroutine_threadsafe(self.poll(), loop)
 
-    def poll(self):
+    def _fix_and_set_property_value(self, _property: str, value: str) -> None:
+        """
+        Set the current value of a property.
+
+        property -- the property name
+        value -- the value to set
+        """
+        prop = self.properties[_property]
+
+        if prop.description.get('minimum'):
+            value = max(prop.description.get('minimum'), value)
+
+        if prop.description.get('maximum'):
+            value = min(prop.description.get('maximum'), value)
+
+        if 'enum' in prop.description and len(prop.description['enum']) > 0 and value not in prop.description['enum']:
+            raise PropertyError('Invalid enum value')
+
+        prop.set_cached_value_and_notify(value)
+
+    async def poll(self):
         """Poll the device for changes."""
         while True:
-            time.sleep(_POLL_INTERVAL)
+            print(f'MITEMP: wait 120s and update {self.mac} properties')
+            await asyncio.sleep(_POLL_INTERVAL)
 
+            pp = None
             try:
-
                 # # bluepy stuff
-                print(f'WIP: update {self.mac} properties ')
+                pp = bluepy.btle.Peripheral(self.mac)
 
-            except Exception:  #TODO: better change exception catching
-                continue
+                # read battery level
+                handle = 27
+                print(f'handle {handle} {self.mac}')
+                pp._writeCmd("rd %X\n" % handle)
+                resp = pp._getResp('rd', timeout=60)
+                if resp is None:
+                    print(f'timeout {handle} {self.mac}')
+                    continue
+                battery, = struct.unpack('<B', resp['d'][0])
+                print(f'done {handle} {self.mac}')
 
-    @staticmethod
-    def brightness(light_state):
-        """
-        Determine the current brightness of the light.
+                # read sensor data
+                handle = 54
+                print(f'handle {handle} {self.mac}')
+                pp._writeCmd("rd %X\n" % handle)
+                resp = pp._getResp('rd', timeout=60)
+                if resp is None:
+                    print(f'timeout {handle} {self.mac}')
+                    continue
+                temperature, humidity, voltage = struct.unpack('<HBH', resp['d'][0])
+                print(f'done {handle} {self.mac}')
 
-        light_state -- current state of the light
-        """
-        return int(light_state['brightness'])
+                print(f'get Temperature {temperature / 100} C')
+                self._fix_and_set_property_value('temperature', temperature / 100)
+
+                print(f'get Humidity {humidity}%')
+                self._fix_and_set_property_value('humidity', humidity)
+
+                print(f'get Voltage {voltage / 1000} V')
+                self._fix_and_set_property_value('voltage', voltage / 1000)
+
+                print(f'get Battery {battery} %')
+                self._fix_and_set_property_value('battery', battery)
+
+            except bluepy.btle.BTLEDisconnectError as err:
+                print(f'Error during poll: {err}')
+                time.sleep(15)
+
+            except Exception as err:
+                print(f'Unknown Error during poll: {err}')
+
+            finally:
+                if pp:
+                    pp.disconnect()
+                time.sleep(5)
